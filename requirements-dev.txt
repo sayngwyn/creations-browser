@@ -1,0 +1,4 @@
+pytest==8.3.5
+PyQt6==6.7.1
+PyQt6-Qt6==6.7.3
+markdown==3.7
