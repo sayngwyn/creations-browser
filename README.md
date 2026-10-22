@@ -184,9 +184,9 @@ Tested live in Mod Organizer 2.5.2 with Fallout 4 and Skyrim Special Edition.
 
 ## How it was made
 
-Creations Browser was written with an AI assistant, Anthropic's Claude, under my direction. I decided what it should do
-and how it should behave, and checked it. The AI wrote most of the code, its 500-plus automated tests and these docs. It
-was also tested live in a real Mod Organizer 2 with both games before release.
+Made with AI. Claude contributed heavily under my direction: I decided what it does and checked it, and the AI wrote
+most of the code, its 500-plus automated tests and these docs. It was also tested live in a real Mod Organizer 2 with
+both games before release.
 
 ## Licence
 
