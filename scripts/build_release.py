@@ -1,8 +1,9 @@
 """Build the release zip: ``dist\\CreationsBrowser-<version>.zip``.
 
-The zip holds ``plugins\\creations_browser\\`` (the plugin's .py files only: no tests, no caches) and README.md, LICENSE and
-CHANGELOG.md at the zip root. The result is deterministic: the same source always gives the same bytes (fixed timestamps and
-attributes, sorted entries, line endings normalised to LF), so the zip's hash can be compared across machines.
+The zip holds ``plugins\\creations_browser\\`` (the plugin's .py files, plus ``assets\\`` with the brand mark, the Sayngwyn
+Serif font and its OFL licence, and the checkbox ticks: no tests, no caches) and README.md, LICENSE and CHANGELOG.md at the zip root. The result is
+deterministic: the same source always gives the same bytes (fixed timestamps and attributes, sorted entries, text line endings
+normalised to LF; images and fonts byte for byte), so the zip's hash can be compared across machines.
 
     python scripts/build_release.py
 
@@ -21,6 +22,9 @@ ROOT = Path(__file__).resolve().parent.parent
 PACKAGE = "creations_browser"
 ROOT_FILES = ("README.md", "LICENSE", "CHANGELOG.md")
 FIXED_TIME = (1980, 1, 1, 0, 0, 0)
+ASSETS = {"OFL.txt", "SayngwynSerif-Regular.ttf", "sayngwyn-mark.png", "check-tick.svg", "check-tick-muted.svg",
+          "check-tick-white.svg"}  # exactly these ship from assets\ (nothing stray)
+BINARY_TYPES = (".png", ".ttf")  # copied byte for byte; everything else is text and gets its line endings normalised
 
 
 def read_version(root: Path) -> str:
@@ -39,12 +43,19 @@ def collect(root: Path) -> list[tuple[str, bytes]]:
         files.append((f"plugins/{PACKAGE}/{path.name}", path.read_bytes()))
     if f"plugins/{PACKAGE}/__init__.py" not in dict(files):
         raise SystemExit(f"{package} has no __init__.py")
+    assets = package / "assets"
+    for path in sorted(assets.iterdir()) if assets.is_dir() else []:  # one level, the named files only
+        if path.is_file() and path.name in ASSETS:
+            files.append((f"plugins/{PACKAGE}/assets/{path.name}", path.read_bytes()))
+    if any(n.endswith(".ttf") for n, _ in files) and f"plugins/{PACKAGE}/assets/OFL.txt" not in dict(files):
+        raise SystemExit("a font ships only with its OFL.txt beside it")
     for name in ROOT_FILES:
         path = root / name
         if not path.is_file():
             raise SystemExit(f"missing {name}")
         files.append((name, path.read_bytes()))
-    return sorted((name, data.replace(b"\r\n", b"\n")) for name, data in files)
+    return sorted((name, data if name.lower().endswith(BINARY_TYPES) else data.replace(b"\r\n", b"\n"))
+                  for name, data in files)
 
 
 def build(root: Path = ROOT) -> Path:

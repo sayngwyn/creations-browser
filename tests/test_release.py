@@ -40,17 +40,41 @@ def test_the_zip_holds_the_plugin_files_and_the_root_documents_only(tree):
     (tree / "tests" / "test_core.py").write_text("x")
     target = build_release.build(tree)
     version = build_release.read_version(tree)
-    assert target == tree / "dist" / f"CreationsBrowser-{version}.zip" and version == "1.1.0"
+    assert target == tree / "dist" / f"CreationsBrowser-{version}.zip" and version == "1.2.0"
     got = names(target)
     expected_py = sorted(p.name for p in (PROJECT / "src" / "creations_browser").glob("*.py"))
-    assert got == sorted(["CHANGELOG.md", "LICENSE", "README.md", *[f"plugins/creations_browser/{n}" for n in expected_py]])
-    assert {"__init__.py", "core.py", "plugin.py", "window.py", "texts.py"} <= set(expected_py)
-    assert not any("pycache" in n or "test" in n.lower() or n.endswith((".pyc", ".txt")) for n in got)
+    assets = ["OFL.txt", "SayngwynSerif-Regular.ttf", "sayngwyn-mark.png", "check-tick.svg", "check-tick-muted.svg",
+              "check-tick-white.svg"]
+    assert got == sorted(["CHANGELOG.md", "LICENSE", "README.md", *[f"plugins/creations_browser/{n}" for n in expected_py],
+                          *[f"plugins/creations_browser/assets/{n}" for n in assets]])
+    assert {"__init__.py", "core.py", "plugin.py", "window.py", "texts.py", "theme.py"} <= set(expected_py)
+    assert not any("pycache" in n or "test" in n.lower() or n.endswith(".pyc") or n == "plugins/creations_browser/notes.txt"
+                   for n in got)
     with zipfile.ZipFile(target) as zf:
         assert zf.testzip() is None
         for n in got:
             compile(zf.read(n).decode("utf-8"), n, "exec") if n.endswith(".py") else None
         assert b"def createPlugin" in zf.read("plugins/creations_browser/__init__.py")
+        for n in assets[1:]:  # images and fonts go in byte for byte (no line-ending rewrite)
+            source = PROJECT / "src" / "creations_browser" / "assets" / n
+            assert zf.read(f"plugins/creations_browser/assets/{n}") == source.read_bytes()
+
+
+def test_only_the_named_assets_ship_and_text_assets_are_normalised(tree):
+    assets = tree / "src" / "creations_browser" / "assets"
+    (assets / "draft-notes.txt").write_text("not for release")
+    (assets / "other.png").write_bytes(b"\x89PNG\r\n")
+    first = build_release.build(tree).read_bytes()
+    assert not any(n.endswith(("draft-notes.txt", "other.png")) for n in names(tree / "dist" / "CreationsBrowser-1.2.0.zip"))
+    ofl = assets / "OFL.txt"
+    ofl.write_bytes(ofl.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))  # a Windows checkout of the licence
+    assert build_release.build(tree).read_bytes() == first
+
+
+def test_a_font_never_ships_without_its_licence(tree):
+    (tree / "src" / "creations_browser" / "assets" / "OFL.txt").unlink()
+    with pytest.raises(SystemExit, match="OFL.txt"):
+        build_release.build(tree)
 
 
 def test_the_same_source_gives_the_same_zip_even_with_new_timestamps_and_line_endings(tree):
@@ -87,7 +111,7 @@ def test_a_missing_document_or_changelog_entry_stops_the_build(tree):
         build_release.build(tree)
     shutil.copy(PROJECT / "LICENSE", tree / "LICENSE")
     (tree / "CHANGELOG.md").write_text("# Changelog\n\n## 0.9.0\n", encoding="utf-8")
-    with pytest.raises(SystemExit, match="no entry for 1.1.0"):
+    with pytest.raises(SystemExit, match="no entry for 1.2.0"):
         build_release.build(tree)
 
 

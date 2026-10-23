@@ -14,7 +14,7 @@ from pathlib import Path
 import mobase
 from PyQt6.QtGui import QIcon
 
-from . import __version__, core, texts
+from . import __version__, core, texts, theme
 
 log = logging.getLogger("creations_browser")
 
@@ -50,7 +50,7 @@ class CreationsBrowserPlugin(mobase.IPluginTool):
         return self.NAME
 
     def author(self) -> str:
-        return "Gwyn"
+        return "sayngwyn"
 
     def description(self) -> str:
         return texts.TOOL_DESCRIPTION
@@ -59,7 +59,7 @@ class CreationsBrowserPlugin(mobase.IPluginTool):
         return _version_info()
 
     def settings(self):
-        return []
+        return [mobase.PluginSetting("theme", texts.THEME_SETTING, theme.DEFAULT_MODE)]
 
     # ---- IPluginTool
 
@@ -79,9 +79,11 @@ class CreationsBrowserPlugin(mobase.IPluginTool):
             game, downloads = self._instance_facts()
             if self._window is None:
                 from .window import CreationsWindow
-                self._window = CreationsWindow(self._parentWidget(), game, downloads)
+                self._window = CreationsWindow(self._parentWidget(), game, downloads, theme_mode=self._saved_theme(),
+                                               on_theme_change=self._save_theme)
             else:
                 self._window.configure(game, downloads)
+                self._window.apply_theme(self._saved_theme(), save=False)  # a change made in MO2's Settings meanwhile
             self._window.show()
             self._window.raise_()
             self._window.activateWindow()
@@ -95,6 +97,21 @@ class CreationsBrowserPlugin(mobase.IPluginTool):
             return bool(self._organizer.isPluginEnabled(self.NAME))
         except Exception:  # MO2 only lists enabled tools, so when it cannot say, carry on
             return True
+
+    def _saved_theme(self) -> str:
+        """The window colours the user picked last time (MO2's plugin settings), or the default."""
+        try:
+            value = self._organizer.pluginSetting(self.NAME, "theme")
+        except Exception as exc:
+            core.log_line(logging.WARNING, f"Creations Browser: could not read the theme setting ({type(exc).__name__})")
+            return theme.DEFAULT_MODE
+        value = " ".join(str(value).split()).lower() if value is not None else ""  # MO2's settings box is free text
+        by_label = {label.lower(): key for key, label in theme.MODE_LABELS.items()}  # "Match MO2" typed in reads as "mo2"
+        value = by_label.get(value, value)
+        return value if value in theme.MODES else theme.DEFAULT_MODE
+
+    def _save_theme(self, mode: str) -> None:
+        self._organizer.setPluginSetting(self.NAME, "theme", mode)
 
     def _instance_facts(self) -> tuple[str | None, str | None]:
         """(game key, Downloads folder) of the MO2 instance, each None when MO2 does not say."""

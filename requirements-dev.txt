@@ -2,3 +2,5 @@ pytest==8.3.5
 PyQt6==6.7.1
 PyQt6-Qt6==6.7.3
 markdown==3.7
+mobase-stubs==2.5.2
+pytest-qt==4.5.0

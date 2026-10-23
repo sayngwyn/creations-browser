@@ -1,0 +1,10 @@
+{
+  "include": ["src", "tests", "scripts"],
+  "exclude": ["**/__pycache__", "test-env", "dist", ".venv"],
+  "venvPath": ".",
+  "venv": ".venv",
+  "extraPaths": ["src", "tests"],
+  "pythonVersion": "3.12",
+  "pythonPlatform": "Windows",
+  "typeCheckingMode": "basic"
+}

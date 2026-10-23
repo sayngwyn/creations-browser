@@ -32,6 +32,9 @@ VERIFIED_BADGE = "✓ Verified"
 OFFICIAL_BADGE = "✓ Official"
 OWNED_LABEL = "In my game only"
 OWNED_TIP = "Creations your game downloaded through its Creations menu (read from the game's own list on this PC)"
+THEME_TIP = ("This window's colours: sayngwyn (black and red), Light, Dark, or Match MO2 (the window looks as Mod "
+             "Organizer 2's own theme draws it)")
+THEME_SETTING = ("Window colours: sayngwyn (black and red), light, dark, or mo2 (match Mod Organizer 2's own theme)")
 OWNED_MARKER = "In your game"
 OWNED_DETAIL = "In your game: you have this through the game's Creations menu."
 OWNED_NOT_DOWNLOADABLE = "It's a store Creation, so your game's Creations menu looks after it."

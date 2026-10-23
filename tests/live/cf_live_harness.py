@@ -77,7 +77,7 @@ class Harness(mobase.IPluginTool):
         try:
             self._main = main_window
             screens = QGuiApplication.screens()
-            if len(screens) > 1:  # keep it off Gwyn's main screen
+            if len(screens) > 1:  # keep it off the main screen
                 main_window.move(screens[1].availableGeometry().topLeft())
             self._steps = self._scenario()
             self._timer = QTimer()
@@ -200,11 +200,13 @@ class Harness(mobase.IPluginTool):
         self._check("sorted by downloads", counts == sorted(counts, reverse=True) and len(counts) > 1, counts[:8])
         self._check("PC filter: no console-only rows", not any(s.get("no_pc_version") for s in sources()), win._status.text())
         if cfg.get("screenshots_dir") and win._list.count():
+            # The gallery shot has nothing selected: a selected Creation shows its preview picture, another author's art.
+            self._shot(win, "search-sorted-by-downloads.png")
             win._list.setCurrentRow(0)
             yield (lambda: not win.busy() and win._detail is not None, "first row details", 60)
             settled = time.monotonic() + 2  # let the preview picture arrive
             yield (lambda: time.monotonic() > settled, "settle", 10)
-            self._shot(win, "search-sorted-by-downloads.png")
+            self._shot(win, "search-details.png")  # only ever used cropped to the details text
         # In my game: the game's own list of downloaded Creations (read only), paid ones included
         if cfg.get("owned_expect"):
             win._query.clear()  # words would filter the owned list by title
@@ -213,11 +215,12 @@ class Harness(mobase.IPluginTool):
             owned_ids = [s.get("content_id") for s in sources()]
             self._check("in my game lists the expected Creation", cfg["owned_expect"] in owned_ids, owned_ids)
             if cfg.get("screenshots_dir"):
+                self._shot(win, "in-my-game.png")  # nothing selected, so no Creation's own art (see above)
                 win.select(cfg["owned_expect"])  # the owned paid Creation, details open
                 yield (lambda: not win.busy() and (win._detail or {}).get("content_id") == cfg["owned_expect"], "owned details", 60)
                 settled = time.monotonic() + 2  # let the preview picture arrive
                 yield (lambda: time.monotonic() > settled, "owned settle", 10)
-                self._shot(win, "in-my-game.png")
+                self._shot(win, "in-my-game-details.png")  # only ever used cropped to the details text
             win._owned_only.setChecked(False)
             yield (lambda: not win.busy(), "leave in my game", 60)
         # browse: an empty search lists the catalogue, most popular first

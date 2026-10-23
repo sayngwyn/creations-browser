@@ -40,7 +40,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 CORE_URL = "https://cdn.bethesda.net/data/core"
 API = "https://api.bethesda.net/ugcmods/v1"
 DOWNLOAD_HOST = "ugcmods.bethesda.net"

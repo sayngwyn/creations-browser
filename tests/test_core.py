@@ -35,8 +35,8 @@ REAL_OPENER_OPEN = urllib.request.OpenerDirector.open
 
 def test_the_package_imports_without_mobase_or_qt():
     import creations_browser
-    assert creations_browser.__version__ == core.VERSION == "1.1.0"
-    assert core.USER_AGENT == ("CreationsBrowser/1.1.0 (unofficial Mod Organizer 2 plugin; "
+    assert creations_browser.__version__ == core.VERSION == "1.2.0"
+    assert core.USER_AGENT == ("CreationsBrowser/1.2.0 (unofficial Mod Organizer 2 plugin; "
                                "+https://github.com/sayngwyn/creations-browser)")
     assert callable(creations_browser.createPlugin)
     # a clean interpreter (other tests in this run load Qt and the plugin module): the package alone loads neither

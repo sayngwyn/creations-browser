@@ -1,11 +1,13 @@
 """Run the live acceptance harness in a test MO2 and put it back as it was.
 
     python tests/live/run_live.py --mo2 <portable MO2 folder> --profile <name> --game fallout4|skyrimspecialedition
-        --free-id N --paid-id N --search TEXT --results <json path> [--backup-dir <folder>]
+        --free-id N --paid-id N --search TEXT --results <json path> [--backup-dir <folder>] [--from-zip <release zip>]
 
-Refuses if any ModOrganizer.exe is running. Snapshots the folder (paths and sizes), byte-copies the profile's files and
-ModOrganizer.ini, copies the plugin package and the harness into ``plugins``, starts MO2 and waits for it to exit, then
-removes what it added, restores any profile file or ModOrganizer.ini that MO2 rewrote, and prints what changed.
+Refuses if this instance's ModOrganizer.exe is running (other installations' MO2s may run beside it). Snapshots the
+folder (paths and sizes), byte-copies the profile's files and ModOrganizer.ini, copies the plugin package (from ``src``,
+or from the built release zip with ``--from-zip``, which is the release check) and the harness into ``plugins``, starts
+MO2 and waits for it to exit, then removes what it added, restores any profile file or ModOrganizer.ini that MO2
+rewrote, and prints what changed.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import time
+import zipfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -69,6 +72,7 @@ def main() -> int:
     ap.add_argument("--no-install", action="store_true", help="stop after the download (no install or removal)")
     ap.add_argument("--screenshots-dir", type=Path, help="save window screenshots here")
     ap.add_argument("--owned-expect", type=int, help="a content id the game's own Creations list must contain")
+    ap.add_argument("--from-zip", type=Path, help="release check: deploy the plugin from this built release zip, not from src")
     ap.add_argument("--control-zip", type=Path, help="diagnosis: no Creations Browser; install and remove this zip only")
     ap.add_argument("--remove-after", action="store_true", help="diagnosis: delete the test mod after MO2 exits, not in MO2")
     ap.add_argument("--no-install-hook", action="store_true", help="diagnosis: deploy with the onModInstalled hook off")
@@ -96,8 +100,24 @@ def main() -> int:
     before = snapshot(mo2)
     started = time.time() - 2  # file times can round down
 
-    if not a.control_zip:
+    if a.from_zip and a.control_zip:
+        sys.exit("--from-zip and --control-zip don't go together")
+    if a.from_zip:  # the release zip's own plugins\creations_browser, exactly as a user would copy it
+        prefix = "plugins/creations_browser/"
+        with zipfile.ZipFile(a.from_zip) as zf:
+            members = [n for n in zf.namelist() if n.startswith(prefix) and not n.endswith("/")]
+            if not any(n == prefix + "__init__.py" for n in members):
+                sys.exit(f"no plugins/creations_browser/__init__.py in {a.from_zip}")
+            for n in members:
+                target = plugins / n[len("plugins/"):]
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(zf.read(n))
+        report_zip = str(a.from_zip.resolve())
+    elif not a.control_zip:
         shutil.copytree(REPO / "src" / "creations_browser", pkg_dest, ignore=shutil.ignore_patterns("__pycache__"))
+        report_zip = None
+    else:
+        report_zip = None
     if a.no_install_hook and not a.control_zip:  # diagnosis only: the deployed copy does not watch installs
         p = pkg_dest / "plugin.py"
         text = p.read_text(encoding="utf-8")
@@ -112,7 +132,7 @@ def main() -> int:
                                     "control_zip": str(a.control_zip.resolve()) if a.control_zip else None,
                                     "screenshots_dir": str(a.screenshots_dir.resolve()) if a.screenshots_dir else None,
                                     "owned_expect": a.owned_expect, "results": str(a.results.resolve())}), encoding="utf-8")
-    report: dict = {"mo2": str(mo2), "profile": a.profile}
+    report: dict = {"mo2": str(mo2), "profile": a.profile, "deployed_from": report_zip or "src"}
     try:
         proc = subprocess.Popen([str(exe), "--multiple", "-p", a.profile], cwd=str(mo2))  # other installations' MO2s may be open
         try:

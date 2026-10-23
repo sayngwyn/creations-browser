@@ -23,7 +23,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import QBuffer, QEvent, QIODevice, QRect, QSize, Qt  # noqa: E402
-from PyQt6.QtGui import QColor, QFontMetrics, QImage, QPalette  # noqa: E402
+from PyQt6.QtGui import QColor, QFontMetrics, QIcon, QImage, QPalette  # noqa: E402
 from PyQt6.QtTest import QTest  # noqa: E402
 from PyQt6.QtWidgets import QApplication, QCheckBox, QLabel, QPushButton, QStyle, QWidget  # noqa: E402
 
@@ -695,6 +695,13 @@ class FakeOrganizer:
         self.short, self.downloads, self.enabled = short, downloads, enabled
         self.disabled_callbacks = []
         self.mod_installed_callbacks = []
+        self.plugin_settings = {}
+
+    def pluginSetting(self, name, key):
+        return self.plugin_settings.get((name, key), "sayngwyn" if key == "theme" else None)  # MO2 hands back the default
+
+    def setPluginSetting(self, name, key, value):
+        self.plugin_settings[(name, key)] = value
 
     def modList(self):
         return types.SimpleNamespace(onModInstalled=lambda callback: self.mod_installed_callbacks.append(callback) or True)
@@ -734,7 +741,11 @@ def plugin_module(qapp, monkeypatch):
         def __str__(self):
             return ".".join(str(p) for p in self.parts)
 
-    fake.IPlugin, fake.IPluginTool, fake.VersionInfo = IPlugin, IPluginTool, VersionInfo
+    class PluginSetting:
+        def __init__(self, key, description, default):
+            self.key, self.description, self.default_value = key, description, default
+
+    fake.IPlugin, fake.IPluginTool, fake.VersionInfo, fake.PluginSetting = IPlugin, IPluginTool, VersionInfo, PluginSetting
     monkeypatch.setitem(sys.modules, "mobase", fake)
     monkeypatch.setattr(CreationsWindow, "AUTO_BROWSE", False)  # the tests that open the list on show turn it on
     monkeypatch.delitem(sys.modules, "creations_browser.plugin", raising=False)
@@ -747,11 +758,13 @@ def test_the_package_entry_point_builds_the_tool_plugin(plugin_module):
     import creations_browser
     plugin = creations_browser.createPlugin()
     assert isinstance(plugin, plugin_module.CreationsBrowserPlugin)
-    assert plugin.name() == plugin.displayName() == "Creations Browser" and plugin.author() == "Gwyn"
-    assert str(plugin.version()) == creations_browser.__version__ == "1.1.0"
+    assert plugin.name() == plugin.displayName() == "Creations Browser" and plugin.author() == "sayngwyn"
+    assert str(plugin.version()) == creations_browser.__version__ == "1.2.0"
     assert "download the free ones" in plugin.description() and "nofficial" in plugin.description()
     assert "download the free ones" in plugin.tooltip() and "unofficial" in plugin.tooltip()
-    assert plugin.settings() == [] and plugin.icon() is not None
+    (setting,) = plugin.settings()
+    assert (setting.key, setting.default_value) == ("theme", "sayngwyn") and "mo2" in setting.description
+    assert plugin.icon() is not None
 
 
 def test_display_opens_one_window_for_the_instance_game_and_reuses_it(plugin_module, tmp_path, net, monkeypatch):
@@ -1936,6 +1949,515 @@ def test_a_selected_row_uses_the_groups_highlighted_text_unless_it_cannot_be_rea
     assert colour(pal, enabled(S.State_Selected)).name() == "#202020"  # the better of Text and WindowText
     assert window_module.contrast_ratio(QColor("#000000"), QColor("#ffffff")) == pytest.approx(21.0)
     assert window_module.contrast_ratio(QColor("#777777"), QColor("#777777")) == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------- the theme
+
+from creations_browser import theme  # noqa: E402
+
+
+@pytest.mark.parametrize("mode", ["sayngwyn", "light", "dark"])
+def test_every_text_colour_reads_on_every_surface_it_can_sit_on(mode):
+    pairs = theme.text_pairs(mode)
+    assert len(pairs) > 20
+    weak = [(what, fg, bg, round(theme.contrast_ratio(QColor(fg), QColor(bg)), 2)) for what, fg, bg in pairs
+            if theme.contrast_ratio(QColor(fg), QColor(bg)) < theme.MIN_CONTRAST]
+    assert weak == []
+
+
+@pytest.mark.parametrize("mode", ["sayngwyn", "light", "dark"])
+def test_every_themes_alarm_keeps_the_brand_alarms_pink_hue(mode):
+    hue = QColor(theme.SCHEMES[mode].alarm).hslHue()  # as drawn, after any lift to 4.5:1
+    assert abs(hue - 348) <= 6, f"{mode} alarm hue {hue}: warnings keep the brand alarm's hue (~348), never the brand red's 0"
+
+
+def test_the_alarm_colour_is_not_the_brand_red():
+    alarm, brand = QColor(theme.ALARM), QColor(theme.ACCENT)
+    assert abs(alarm.hslHue() - brand.hslHue()) > 10 or brand.hslHue() < 10 and alarm.hslHue() > 330
+
+
+def test_the_window_opens_in_sayngwyn_colours_scoped_to_itself(make_window):
+    window = make_window()
+    assert window.objectName() == "creationsBrowser" and window.theme_mode() == "sayngwyn"
+    sheet = window.styleSheet()
+    assert sheet and all(line.startswith("#creationsBrowser") or not line.strip() or line.startswith(" ") or line == "}"
+                         for line in sheet.splitlines())
+    assert window.palette().color(QPalette.ColorRole.Base).name() == theme.SURFACE
+    assert QApplication.instance().styleSheet() == ""  # MO2's own style sheet is never touched
+    assert window._download_button.property("primary") is True
+    assert window._theme.currentData() == "sayngwyn" and window._theme.currentText() == "sayngwyn"
+
+
+def test_follow_mo2_drops_every_colour_of_its_own_and_tells_the_plugin(make_window, monkeypatch, tmp_path):
+    saved = []
+    window = CreationsWindow(None, "fallout4", tmp_path / "dl", on_theme_change=saved.append)
+    try:
+        window._theme.setCurrentIndex(window._theme.findData("mo2"))
+        assert window.theme_mode() == "mo2" and window.styleSheet() == "" and saved == ["mo2"]
+        app_base = QApplication.palette().color(QPalette.ColorRole.Base)
+        assert window.palette().color(QPalette.ColorRole.Base) == app_base
+        window._theme.setCurrentIndex(window._theme.findData("sayngwyn"))
+        assert window.theme_mode() == "sayngwyn" and window.styleSheet() and saved == ["mo2", "sayngwyn"]
+    finally:
+        window.shutdown()
+        window.close()
+
+
+def test_switching_a_shown_window_back_to_follow_mo2_looks_like_a_fresh_one(make_window):
+    fresh = make_window()
+    fresh.apply_theme("mo2", save=False)
+    switched = make_window()
+    for window in (fresh, switched):
+        window.resize(500, 360)
+        window.show()
+    QApplication.processEvents()
+    switched.apply_theme("mo2", save=False)  # after it was shown in sayngwyn
+    QApplication.processEvents()
+    role = QPalette.ColorRole
+    for r in (role.Window, role.WindowText, role.Base, role.Text):
+        assert switched.palette().color(r) == fresh.palette().color(r) == QApplication.palette().color(r)
+    assert switched.grab().toImage().pixelColor(3, 3) == fresh.grab().toImage().pixelColor(3, 3)
+
+
+def test_a_light_mo2_style_sheet_cannot_lighten_the_sayngwyn_window(make_window):
+    app = QApplication.instance()
+    before = app.styleSheet()
+    window = make_window()
+    try:
+        app.setStyleSheet("* { background: #e8e8e8; color: #000000; }")  # like MO2's Paper Light
+        window.resize(900, 600)
+        window.show()
+        QApplication.processEvents()
+        image = window.grab().toImage()
+        message = window._message.mapTo(window, window._message.rect().center())
+        light = [p for p in (message, window._stack.mapTo(window, window._stack.rect().topLeft()) + QRect(0, 0, 6, 6).bottomRight())
+                 if image.pixelColor(p).lightness() > 128]
+        assert light == []
+    finally:
+        app.setStyleSheet(before)
+
+
+def test_a_saved_theme_is_read_loosely_and_picked_up_on_reopening(plugin_module, tmp_path):
+    organizer = FakeOrganizer("Fallout4", tmp_path / "dl")
+    plugin = plugin_module.createPlugin()
+    plugin.init(organizer)
+    organizer.plugin_settings[("Creations Browser", "theme")] = " MO2 "
+    assert plugin._saved_theme() == "mo2"
+    plugin.display()
+    window = plugin._window
+    try:
+        assert window.theme_mode() == "mo2"
+        window.hide()
+        organizer.plugin_settings[("Creations Browser", "theme")] = "sayngwyn"  # changed in MO2's Settings meanwhile
+        plugin.display()
+        assert window.theme_mode() == "sayngwyn"
+    finally:
+        window.shutdown()
+        window.close()
+
+
+def _near(colour: QColor, hex_colour: str, slack: int = 24) -> bool:
+    target = QColor(hex_colour)
+    return all(abs(a - b) <= slack for a, b in ((colour.red(), target.red()), (colour.green(), target.green()),
+                                               (colour.blue(), target.blue())))
+
+
+def _pixels(image):
+    return [image.pixelColor(x, y) for y in range(image.height()) for x in range(image.width())]
+
+
+def test_a_checked_box_is_a_silver_outline_with_a_bone_tick_and_no_red(make_window):
+    window = make_window()
+    window.resize(900, 600)
+    window.show()
+    box = window._free_only
+    box.setChecked(True)
+    QApplication.processEvents()
+    image = box.grab().toImage()
+    image = image.copy(0, 0, min(image.height(), image.width()), image.height())  # the indicator sits at the left
+    pixels = _pixels(image)
+    assert not any(_near(p, theme.ACCENT, 30) or _near(p, theme.ACCENT_HOVER, 30) for p in pixels)  # no red fill
+    assert any(_near(p, theme.RAISED, 6) for p in pixels)                                        # the raised box
+    assert any(p.lightness() > 180 for p in pixels)                                              # the bone tick
+    assert all((theme.ASSETS / name).is_file() for name in (theme.TICK_FILE, theme.MUTED_TICK_FILE))
+
+
+def test_hovered_and_picked_list_items_use_the_deep_red_not_the_brand_red():
+    sheet = theme.stylesheet("sayngwyn")
+    popup = sheet[sheet.index("QComboBox QAbstractItemView {"):sheet.index("QToolTip")]
+    assert theme.ACCENT not in popup and theme.DEEP in popup and theme.RAISED in popup
+    menu = sheet[sheet.index("QMenu {"):sheet.index("QListWidget {")]
+    assert theme.ACCENT not in menu and f"background: {theme.DEEP}" in menu and theme.BORDER in menu
+    red_uses = [line for line in sheet.splitlines() if theme.ACCENT in line]
+    assert red_uses and all("tab:selected" in line or "primary" in line for line in red_uses)
+
+
+def test_scrollbars_are_slim_silver_handles_on_the_panel_colour(make_window):
+    window = make_window()
+    window.resize(900, 600)
+    window.show()
+    for i in range(200):
+        window._list.addItem(f"Creation {i}")
+    QApplication.processEvents()
+    bar = window._list.verticalScrollBar()
+    assert bar.isVisible() and bar.width() == 10
+    image = bar.grab().toImage()
+    pixels = _pixels(image)
+    handle = theme.over(theme.SILVER, theme.SCROLL_ALPHA, theme.SURFACE)
+    assert any(_near(p, theme.SURFACE, 3) for p in pixels) and any(_near(p, handle.name(), 6) for p in pixels)
+    assert theme.SCROLL_ALPHA == round(0.35 * 255) and theme.SCROLL_HOVER_ALPHA == round(0.6 * 255)
+
+
+def test_a_tooltip_sits_on_the_raised_colour_with_a_border(make_window):
+    from PyQt6.QtWidgets import QToolTip
+    window = make_window()
+    window.resize(900, 600)
+    window.show()
+    QApplication.processEvents()
+    QToolTip.showText(window._free_only.mapToGlobal(window._free_only.rect().center()), "A tip", window._free_only)
+    QApplication.processEvents()
+    tips = [w for w in QApplication.topLevelWidgets() if w.inherits("QTipLabel") and w.isVisible()]
+    try:
+        assert tips
+        image = tips[0].grab().toImage()
+        assert _near(image.pixelColor(image.width() // 2, 2), theme.RAISED, 4)
+        assert _near(image.pixelColor(0, image.height() // 2), theme.BORDER, 4)
+    finally:
+        QToolTip.hideText()
+
+
+def test_the_picker_offers_the_four_themes_in_the_house_order(make_window):
+    window = make_window()
+    got = [(window._theme.itemData(i), window._theme.itemText(i)) for i in range(window._theme.count())]
+    assert got == [("sayngwyn", "sayngwyn"), ("light", "Light"), ("dark", "Dark"), ("mo2", "Match MO2")]
+
+
+@pytest.mark.parametrize("mode", ["light", "dark"])
+def test_light_and_dark_are_plain_with_no_brand_colours_and_no_mark(make_window, mode):
+    sheet = theme.stylesheet(mode).lower()
+    brand = (theme.ACCENT, theme.ACCENT_HOVER, theme.DEEP, theme.ROW_HOVER, theme.WINDOW, theme.SURFACE, theme.RAISED,
+             theme.BORDER, theme.ALARM, theme.TEXT, theme.SILVER)
+    assert not [c for c in brand if c.lower() in sheet]
+    scheme = theme.SCHEMES[mode]
+    for colour in (scheme.accent, scheme.selected, scheme.row_hover, scheme.checked_fill):
+        assert 180 < QColor(colour).hslHue() < 260  # a neutral blue, never a red
+    assert theme.TICK_FILE not in sheet and theme.WHITE_TICK_FILE in sheet
+    window = make_window()
+    window.apply_theme(mode, save=False)
+    window.show()
+    QApplication.processEvents()
+    assert window.styleSheet() == theme.stylesheet(mode) and window._theme.currentData() == mode
+    assert not window._mark.isVisible() and window._message.graphicsEffect() is None
+    assert window._message.font().family() == window.font().family()  # no Sayngwyn Serif either
+
+
+@pytest.mark.parametrize("mode", ["sayngwyn", "light", "dark"])
+def test_mo2s_own_sheet_cannot_show_through_a_theme_of_ours(make_window, mode):
+    app = QApplication.instance()
+    assert isinstance(app, QApplication)
+    before = app.styleSheet()
+    window = make_window()
+    try:
+        app.setStyleSheet("* { background: #ff00ff; color: #00ff00; }")  # a loud MO2 theme
+        window.apply_theme(mode, save=False)
+        window.resize(900, 600)
+        window.show()
+        window._free_only.setChecked(True)
+        QApplication.processEvents()
+        loud = [w for w in (window, window._list, window._query, window._category, window._free_only, window._download_button)
+                if any(_near(p, "#ff00ff", 40) for p in _pixels(w.grab().toImage().scaled(60, 20)))]
+        assert loud == []
+    finally:
+        app.setStyleSheet(before)
+
+
+@pytest.mark.parametrize("mode", ["sayngwyn", "light", "dark"])
+def test_a_selected_rows_painted_text_reads_on_the_themes_selection(make_window, net, mode):
+    add_fine(net)
+    window = make_window()
+    window.apply_theme("light" if mode == "sayngwyn" else "sayngwyn", save=False)  # a switch before the first show
+    window.apply_theme(mode, save=False)
+    window.resize(900, 600)
+    window.show()
+    window.search("fine")
+    settle(window)
+    window._list.setCurrentRow(0)
+    QApplication.processEvents()
+    scheme = theme.SCHEMES[mode]
+    image = window._list.viewport().grab().toImage()
+    rect = window._list.visualItemRect(window._list.item(0))
+    row = [image.pixelColor(x, y) for y in range(rect.top() + 2, rect.bottom() - 2) for x in range(rect.left() + 4, rect.right() - 4)]
+    assert any(_near(p, scheme.selected, 3) for p in row)  # the theme's own selection
+    darkest_text = max(row, key=lambda p: theme.contrast_ratio(p, QColor(scheme.selected)))
+    assert theme.contrast_ratio(darkest_text, QColor(scheme.selected)) >= theme.MIN_CONTRAST  # its text reads on it
+
+
+@pytest.mark.parametrize("first, then", [("sayngwyn", "light"), ("light", "dark"), ("dark", "sayngwyn"),
+                                         ("sayngwyn", "mo2"), ("mo2", "light")])
+def test_a_switch_before_the_first_show_keeps_the_new_themes_palette(make_window, first, then):
+    window = make_window()
+    window.apply_theme(first, save=False)
+    window.apply_theme(then, save=False)
+    window.grab()  # Qt's lazy first polish happens here or at the first show
+    window.show()
+    QApplication.processEvents()
+    role = QPalette.ColorRole
+    if then == "mo2":
+        expected = QApplication.palette()
+        assert all(window.palette().color(r) == expected.color(r) for r in (role.Window, role.Base, role.Text))
+    else:
+        scheme = theme.SCHEMES[then]
+        assert (window.palette().color(role.Base).name(), window.palette().color(role.Text).name()) == (scheme.surface,
+                                                                                                         scheme.text)
+
+
+@pytest.mark.parametrize("mode", ["sayngwyn", "light", "dark"])
+def test_a_selected_row_has_the_edge_and_no_row_shifts(make_window, mode):
+    scheme = theme.SCHEMES[mode]
+    window = make_window()
+    window.apply_theme(mode, save=False)
+    window.resize(900, 600)
+    window.show()
+    for i in range(4):
+        window._list.addItem(f"Row {i}")
+    window._list.setCurrentRow(1)
+    QApplication.processEvents()
+    image = window._list.viewport().grab().toImage()
+    picked, plain = (window._list.visualItemRect(window._list.item(i)) for i in (1, 2))
+    assert picked.height() == plain.height()  # every row has the same borders, so nothing shifts
+    middle = picked.center().y()
+    assert all(_near(image.pixelColor(picked.left() + x, middle), scheme.edge, 2) for x in range(3))  # 3 px on the left
+    assert _near(image.pixelColor(picked.center().x(), picked.top()), scheme.edge, 2)  # 1 px on top
+    assert _near(image.pixelColor(picked.center().x(), picked.bottom()), scheme.edge, 2)  # and below
+    assert not _near(image.pixelColor(plain.left(), plain.center().y()), scheme.edge, 30)  # a plain row has none
+
+
+def test_the_sayngwyn_controls_follow_the_brand_rules():
+    sheet = theme.stylesheet("sayngwyn")
+    assert f"QLineEdit:hover, #creationsBrowser QComboBox:hover" in sheet and theme.STRIPE in sheet  # hover #767375
+    disabled = sheet[sheet.index("QPlainTextEdit:disabled"):]
+    assert f"background: {theme.WINDOW}" in disabled.split("}")[0]  # disabled inputs sit on the window colour
+    chunk = sheet[sheet.index("QProgressBar::chunk"):].split("}")[0]
+    assert theme.DEEP in chunk  # the progress fill is the deep red, not silver
+    assert theme.STRIPE == "#767375"
+
+
+def test_a_right_click_really_opens_the_menu(make_window):
+    import gc
+    from PyQt6.QtWidgets import QMenu
+    window = make_window()
+    window.show()
+    QApplication.processEvents()
+    window._query.customContextMenuRequested.emit(window._query.rect().center())
+    gc.collect()  # the menu must outlive the slot that made it
+    QApplication.processEvents()
+    menus = [m for m in QApplication.topLevelWidgets() if isinstance(m, QMenu) and m.isVisible()]
+    try:
+        assert len(menus) == 1 and any("Paste" in a.text() for a in menus[0].actions())
+    finally:
+        for menu in menus:
+            menu.close()
+
+
+@pytest.mark.parametrize("mode", ["sayngwyn", "light", "dark", "mo2"])
+def test_right_click_menu_icons_take_the_themes_text_colour(make_window, monkeypatch, mode):
+    from PyQt6.QtGui import QPixmap
+    from PyQt6.QtWidgets import QLineEdit, QMenu, QPlainTextEdit
+    shown = []
+    monkeypatch.setattr(QMenu, "popup", lambda menu, *a: shown.append(menu))
+    stock = QPixmap(16, 16)  # a stand-in for Qt's stock icon (the test platform has none): mid-grey, like Windows' own
+    stock.fill(QColor("#808080"))
+    for cls in (QLineEdit, QPlainTextEdit):
+        original = cls.createStandardContextMenu
+
+        def with_icons(self, *a, _original=original):
+            menu = _original(self, *a)
+            assert menu is not None
+            for action in menu.actions():
+                if not action.isSeparator():
+                    action.setIcon(QIcon(stock))
+            return menu
+        monkeypatch.setattr(cls, "createStandardContextMenu", with_icons)
+    window = make_window()
+    window.apply_theme(mode, save=False)
+    window.show()
+    QApplication.processEvents()
+    for box in (window._query, window._description, window._notes):
+        assert box.contextMenuPolicy() == Qt.ContextMenuPolicy.CustomContextMenu
+        box.customContextMenuRequested.emit(box.rect().center())
+    assert len(shown) == 3
+    icons = [a.icon() for menu in shown for a in menu.actions() if not a.icon().isNull()]
+    assert icons
+    if mode == "mo2":  # left exactly as MO2's theme draws them
+        assert all(_near(i.pixmap(QSize(16, 16)).toImage().pixelColor(8, 8), "#808080", 2) for i in icons)
+        return
+    scheme = theme.SCHEMES[mode]
+    for icon in icons:
+        image = icon.pixmap(QSize(16, 16)).toImage()
+        inked = [image.pixelColor(x, y) for y in range(image.height()) for x in range(image.width())
+                 if image.pixelColor(x, y).alpha() > 200]
+        assert inked and all(_near(p, scheme.text, 2) for p in inked)
+        disabled = icon.pixmap(QSize(16, 16), QIcon.Mode.Disabled).toImage()
+        assert any(_near(disabled.pixelColor(x, y), scheme.muted, 2) for y in range(16) for x in range(16)
+                   if disabled.pixelColor(x, y).alpha() > 200)
+
+
+def test_match_mo2_sets_nothing_and_its_rows_are_lifted_to_readable(make_window):
+    window = make_window()
+    window.apply_theme("mo2", save=False)
+    assert window.styleSheet() == "" and not window._mark.isVisible()
+    palette = QPalette()
+    for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive):
+        palette.setColor(group, QPalette.ColorRole.Base, QColor("#303030"))
+        palette.setColor(group, QPalette.ColorRole.AlternateBase, QColor("#363636"))
+        palette.setColor(group, QPalette.ColorRole.Text, QColor("#606060"))  # a custom theme's text that barely reads
+        palette.setColor(group, QPalette.ColorRole.Highlight, QColor("#7a8cff"))
+        palette.setColor(group, QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+    state = QStyle.StateFlag.State_Enabled | QStyle.StateFlag.State_Active
+    plain = window_module.row_text_colour(palette, state)
+    picked = window_module.row_text_colour(palette, state | QStyle.StateFlag.State_Selected)
+    assert all(theme.contrast_ratio(plain, QColor(b)) >= theme.MIN_CONTRAST for b in ("#303030", "#363636"))
+    assert theme.contrast_ratio(picked, QColor("#7a8cff")) >= theme.MIN_CONTRAST
+    assert plain.hslSaturation() < 10  # lifted in lightness only: still a grey
+
+
+def test_a_typed_theme_label_is_read_as_its_choice(plugin_module, tmp_path):
+    organizer = FakeOrganizer("Fallout4", tmp_path / "dl")
+    plugin = plugin_module.createPlugin()
+    plugin.init(organizer)
+    for typed, expected in (("Match  MO2", "mo2"), ("light", "light"), (" Dark", "dark"), ("neon", "sayngwyn")):
+        organizer.plugin_settings[("Creations Browser", "theme")] = typed
+        assert plugin._saved_theme() == expected
+
+
+BRAND_SKILL = Path(os.environ.get("SAYNGWYN_BRAND_SKILL",
+                                  str(Path.home() / ".claude" / "skills" / "sayngwyn-mod-style" / "SKILL.md")))
+BRAND_ROWS = {  # our constant: the start of its row in the brand skill's "App and window theme" table
+    "WINDOW": "Window background", "SURFACE": "Panels and cards", "ALTERNATE": "Alternate rows", "BUTTON": "Alternate rows",
+    "RAISED": "Raised surfaces", "BORDER": "Borders", "STRIPE": "Neutral side stripes", "TEXT": "Main text",
+    "MUTED": "Muted text",
+    "SILVER": "Everyday buttons", "ACCENT": "Accent:", "ACCENT_HOVER": "Accent:", "DEEP": "Selected row",
+    "ROW_HOVER": "Selected row", "ALARM": "Errors and alarms",
+}
+
+
+def _brand_table() -> dict[str, str]:
+    if not BRAND_SKILL.is_file():  # dev-only: the brand skill lives on the author's PC, not in this repo
+        pytest.skip(f"brand skill not found at {BRAND_SKILL}")
+    section = BRAND_SKILL.read_text(encoding="utf-8").split("## App and window theme", 1)[1].split("\n## ", 1)[0]
+    rows = {}
+    for line in section.splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) == 2 and cells[0] not in ("Role", "---"):
+            rows[cells[0]] = cells[1].lower()
+    return rows
+
+
+def _brand_row(rows: dict[str, str], start: str) -> str:
+    hits = [colour for role, colour in rows.items() if role.startswith(start)]
+    assert len(hits) == 1, f"the brand skill has no single row starting {start!r}"
+    return hits[0]
+
+
+@pytest.mark.parametrize("name", sorted(BRAND_ROWS))
+def test_the_built_in_sayngwyn_colours_match_the_brand_skill(name):
+    value = getattr(theme, name).lower()
+    assert value in _brand_row(_brand_table(), BRAND_ROWS[name]), f"theme.{name} = {value} is not in the brand skill's table"
+
+
+def test_the_silver_outline_alphas_match_the_brand_skill():
+    cell = _brand_row(_brand_table(), "Everyday buttons")
+    sheet = theme.stylesheet("sayngwyn")
+    for alpha in (115, 235, 28, 52, 55):
+        assert f"{alpha}/255" in cell and f", {alpha})" in sheet
+
+
+def test_the_sayngwyn_theme_uses_the_character_sheet_palette():
+    assert (theme.WINDOW, theme.SURFACE, theme.ACCENT, theme.DEEP, theme.TEXT) == (
+        "#0f0d0e", "#211a1a", "#812727", "#601d2c", "#dededb")
+
+
+def test_the_empty_details_pane_carries_the_brand_only_in_the_sayngwyn_theme(make_window):
+    from PyQt6.QtWidgets import QGraphicsDropShadowEffect, QGraphicsOpacityEffect
+    window = make_window()
+    window.show()
+    QApplication.processEvents()
+    assert window._stack.currentIndex() == 0 and window._message.text() == texts.BROWSE_HINT
+    family = theme.brand_family()
+    assert family and window._message.font().family() == family
+    assert window._message.font().pixelSize() >= 18  # the serif only at 18 px or more
+    assert isinstance(window._message.graphicsEffect(), QGraphicsDropShadowEffect)
+    assert window._mark.isVisible() and isinstance(window._mark.graphicsEffect(), QGraphicsOpacityEffect)
+    assert window._mark.graphicsEffect().opacity() == pytest.approx(0.2)
+    window.apply_theme("mo2", save=False)
+    assert not window._mark.isVisible() and window._message.graphicsEffect() is None
+    assert window._message.font().family() == window.font().family()
+    window.apply_theme("sayngwyn", save=False)
+    assert window._mark.isVisible() and window._message.font().family() == family
+
+
+def test_a_problem_in_the_details_pane_is_never_dressed_as_brand(make_window, net):
+    window = make_window()
+    window.show()
+    window._show_message("Couldn't load this Creation. Something broke.", rest=False)
+    QApplication.processEvents()
+    assert not window._mark.isVisible() and window._message.graphicsEffect() is None
+    window._show_message("Loading details…")
+    assert window._mark.isVisible()
+    assert window._mark.pixmap().devicePixelRatio() == pytest.approx(window.devicePixelRatioF())
+    window._show_message("Couldn't load this Creation. Something broke.", rest=False)
+    window.apply_theme("mo2", save=False)
+    window.apply_theme("sayngwyn", save=False)  # a theme switch keeps a problem plain
+    assert not window._mark.isVisible() and window._message.graphicsEffect() is None
+
+
+def test_an_unknown_or_unsaveable_theme_falls_back_without_breaking(tmp_path):
+    def broken(_mode):
+        raise RuntimeError("no settings")
+    window = CreationsWindow(None, "fallout4", tmp_path / "dl", theme_mode="neon", on_theme_change=broken)
+    try:
+        assert window.theme_mode() == "sayngwyn"  # the opening choice is never saved back
+        window.apply_theme("mo2")  # saving fails, the colours still change
+        assert window.theme_mode() == "mo2" and window.styleSheet() == ""
+    finally:
+        window.shutdown()
+        window.close()
+
+
+def test_a_problem_on_the_status_line_gets_the_warning_sign_and_the_alarm_tone(make_window, monkeypatch, net):
+    def down(request, timeout):
+        raise OSError("connection refused")
+    window = make_window()
+    window.show()
+    with monkeypatch.context() as m:
+        m.setattr(core, "_open", down)
+        window.search("fine")
+        settle(window)
+    assert window._status.text() == texts.describe_error("UNREACHABLE")  # the words themselves are unchanged
+    assert window._status.property("tone") == "error" and window._status_sign.isVisible()
+    assert window._status_sign.text() == "⚠"
+    add_fine(net)
+    window.search("fine")
+    settle(window)
+    assert window._status.property("tone") == "" and not window._status_sign.isVisible()
+
+
+def test_the_plugin_opens_the_window_in_the_saved_colours_and_saves_a_new_pick(plugin_module, tmp_path):
+    organizer = FakeOrganizer("Fallout4", tmp_path / "dl")
+    organizer.plugin_settings[("Creations Browser", "theme")] = "mo2"
+    plugin = plugin_module.createPlugin()
+    plugin.init(organizer)
+    plugin.display()
+    window = plugin._window
+    try:
+        assert window.theme_mode() == "mo2" and window.styleSheet() == ""
+        window._theme.setCurrentIndex(window._theme.findData("sayngwyn"))
+        assert organizer.plugin_settings[("Creations Browser", "theme")] == "sayngwyn"
+        organizer.plugin_settings[("Creations Browser", "theme")] = "garbage"
+        assert plugin._saved_theme() == "sayngwyn"
+    finally:
+        window.shutdown()
+        window.close()
 
 
 def test_an_inactive_selected_row_paints_without_errors(make_window, net):
@@ -3149,7 +3671,10 @@ def test_the_window_takes_a_dialog_stylesheet_background_like_mo2_themes_give(ma
         window.resize(400, 300)
         window.show()
         QApplication.processEvents()
-        assert window.grab().toImage().pixelColor(2, 2).name() == "#123456"
+        assert window.grab().toImage().pixelColor(2, 2).name() == theme.WINDOW  # sayngwyn: its own black, over MO2's
+        window.apply_theme("mo2", save=False)
+        QApplication.processEvents()
+        assert window.grab().toImage().pixelColor(2, 2).name() == "#123456"  # Follow MO2: MO2's dialog background
     finally:
         app.setStyleSheet(before)
 

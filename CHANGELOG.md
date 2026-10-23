@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.2.0 — the sayngwyn look
+
+- The window opens in the sayngwyn colours (black and deep red, from the author's character sheet, matching their other
+  mods). Red marks only what's selected and the Download button; everyday buttons are silver outlines.
+- While nothing is selected, the details pane shows the sayngwyn mark, faded, above the hint, set in the Sayngwyn Serif
+  font (included, under the SIL Open Font License). Lists, filters and buttons stay plain.
+- **Theme** picker in the window, the same four as the author's other plugins: **sayngwyn** (the default), **Light**,
+  **Dark** (both plain, with a neutral blue accent), and **Match MO2** (the window looks exactly as your MO2 theme draws it,
+  as before). The window's own themes look the same whatever theme MO2 runs. The choice is remembered in MO2's plugin
+  settings. In the window's own themes the right-click menu's icons take the theme's text colour, so they read in each.
+- Ticked boxes are silver with a bone tick; menus, drop-down lists and tooltips sit on a raised dark colour with a border;
+  scrollbars are slim and silver.
+- Problems on the status line now show a ⚠ sign and a distinct pink-red colour, so they never read as ordinary updates.
+- Every text colour reads at 4.5:1 or better on every background it can sit on (checked by the tests).
+
 ## 1.1.0 — search, sort and filters
 
 - Filters above the list, each re-running the current search: **PC versions only** (on by default; console-only Creations are

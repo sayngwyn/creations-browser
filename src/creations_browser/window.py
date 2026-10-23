@@ -4,7 +4,8 @@ Nothing here talks to Mod Organizer: the plugin hands in the instance's game and
 on a small thread pool (never the UI thread) and starts only when the window is first shown (it opens on a list), or the user
 searches, changes the game, a filter or the sort, selects a Creation or downloads. The one local read is the game's own list
 of Creations it downloaded (``ContentCatalog.txt``), which marks those Creations "In your game" and feeds the In my game view.
-Colours come from the application palette (MO2's theme); sizes come from the font, so it follows the display scaling.
+Colours come from the window's theme (``theme.py``: sayngwyn's own colours by default, or MO2's own theme); sizes
+come from the font, so it follows the display scaling.
 """
 
 from __future__ import annotations
@@ -17,11 +18,13 @@ from typing import Callable
 
 from PyQt6.QtCore import QBuffer, QByteArray, QObject, QRunnable, QSize, Qt, QThreadPool, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QColor, QDesktopServices, QFont, QImage, QImageReader, QPalette, QPixmap
-from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QFrame, QGraphicsDropShadowEffect, QGraphicsOpacityEffect,
+                             QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu,
                              QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSizePolicy, QSplitter, QStackedWidget,
                              QStyle, QStyledItemDelegate, QStyleOptionViewItem, QTabWidget, QVBoxLayout, QWidget)
 
-from . import core, texts
+from . import core, texts, theme
+from .theme import contrast_ratio
 
 log = logging.getLogger("creations_browser")
 
@@ -274,19 +277,6 @@ def _download_job(game: str, cid: int, downloads: Path, progress: Callable, canc
 MIN_TEXT_CONTRAST = 3.0  # below this contrast ratio the palette's selected-row text is not used (WCAG large-text level)
 
 
-def _luminance(colour: QColor) -> float:
-    """Relative luminance of a colour (WCAG 2.x), 0 (black) to 1 (white)."""
-    def channel(v: float) -> float:
-        return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
-    return 0.2126 * channel(colour.redF()) + 0.7152 * channel(colour.greenF()) + 0.0722 * channel(colour.blueF())
-
-
-def contrast_ratio(a: QColor, b: QColor) -> float:
-    """WCAG contrast ratio of two colours, 1 (none) to 21 (black on white)."""
-    hi, lo = sorted((_luminance(a), _luminance(b)), reverse=True)
-    return (hi + 0.05) / (lo + 0.05)
-
-
 def colour_group(state: QStyle.StateFlag) -> QPalette.ColorGroup:
     """The palette group a style draws an item in, chosen as QCommonStyle does: Disabled when the item is not enabled,
     Inactive when its window is not the active one, otherwise Active."""
@@ -300,20 +290,28 @@ def colour_group(state: QStyle.StateFlag) -> QPalette.ColorGroup:
 def row_text_colour(palette: QPalette, state: QStyle.StateFlag) -> QColor:
     """The colour of a result row's text. A selected row uses the palette's HighlightedText for the row's colour group, but
     where that group's HighlightedText is hard to read on its Highlight (on Windows an inactive selection is pale grey under
-    white text) the better of Text and WindowText is used instead."""
+    white text) the better of Text and WindowText is used instead. Either way it is lifted to 4.5:1 on the row's background,
+    keeping its hue, so a theme ("Match MO2" can be any MO2 theme) can't leave the rows unreadable."""
     group = colour_group(state)
     role = QPalette.ColorRole
     if not state & QStyle.StateFlag.State_Selected:
-        return palette.color(group, role.Text)
+        backs = [palette.color(group, r) for r in (role.Base, role.AlternateBase)]
+        return theme.readable(palette.color(group, role.Text), backs)
     back, colour = palette.color(group, role.Highlight), palette.color(group, role.HighlightedText)
     if group != QPalette.ColorGroup.Active and contrast_ratio(colour, back) < MIN_TEXT_CONTRAST:
-        return max((palette.color(group, r) for r in (role.Text, role.WindowText)), key=lambda c: contrast_ratio(c, back))
-    return colour
+        colour = max((palette.color(group, r) for r in (role.Text, role.WindowText)), key=lambda c: contrast_ratio(c, back))
+    return theme.readable(colour, [back])
 
 
 class _RowDelegate(QStyledItemDelegate):
     """Title in bold; under it the Free / Get it in game marker in bold, then 'by author' (with a '✓ Verified' / '✓ Official'
-    mark when the author has one), the local state and a few stats. All of it in the palette's colours."""
+    mark when the author has one), the local state and a few stats. In a theme of ours the text takes that theme's colour
+    (Qt keeps a style sheet's palette from before a theme switch, so the list's palette can't be trusted for it); under
+    "Match MO2" it takes the palette's, lifted to 4.5:1."""
+
+    def __init__(self, parent, scheme: Callable[[], theme.Scheme | None]):
+        super().__init__(parent)
+        self._scheme = scheme
 
     def _lines(self, index) -> tuple[str, str, str]:
         """(title, marker, the rest of the second line: 'by author  ·  state  ·  stats')."""
@@ -333,7 +331,8 @@ class _RowDelegate(QStyledItemDelegate):
         widget = opt.widget
         (widget.style() if widget else QApplication.style()).drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, widget)
         title, marker, rest = self._lines(index)
-        colour = row_text_colour(opt.palette, opt.state)
+        scheme = self._scheme()
+        colour = QColor(scheme.text) if scheme is not None else row_text_colour(opt.palette, opt.state)
         pad = opt.fontMetrics.height() // 4
         rect = opt.rect.adjusted(pad * 2, pad, -pad * 2, -pad)
         painter.save()
@@ -377,11 +376,17 @@ class CreationsWindow(QDialog):
     AUTO_BROWSE = True  # the first time the window is shown it browses at once (tests switch it off)
 
     def __init__(self, parent: QWidget | None = None, instance_game: str | None = None, downloads_dir: str | Path | None = None,
-                 catalog_base: str | Path | None = None):
+                 catalog_base: str | Path | None = None, theme_mode: str = theme.DEFAULT_MODE,
+                 on_theme_change: Callable[[str], None] | None = None):
         super().__init__(parent)
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowMinMaxButtonsHint | Qt.WindowType.WindowCloseButtonHint)
         self.setModal(False)
         self.setWindowTitle("Creations Browser for Mod Organizer 2")
+        self.setObjectName(theme.OBJECT_NAME)  # scopes the sayngwyn style sheet to this window
+        self._on_theme_change = on_theme_change  # the plugin saves the choice (MO2's plugin settings)
+        self._theme_mode: str | None = None
+        self._context_menu: QMenu | None = None  # the open right-click menu, kept alive while it shows
+        self._screen_hooked = False
         self._instance: str | None = None
         self._downloads: Path | None = None
         self.catalog_base = catalog_base  # where the games' own Creations lists are looked for (None: %LOCALAPPDATA%)
@@ -436,6 +441,7 @@ class CreationsWindow(QDialog):
         for button in self.findChildren(QPushButton):  # a dialog would press its default button on Enter; Enter searches here
             button.setAutoDefault(False)
             button.setDefault(False)
+        self.apply_theme(theme_mode, save=False)
         self.configure(instance_game, downloads_dir)
         QApplication.instance().aboutToQuit.connect(self.shutdown)
 
@@ -471,6 +477,7 @@ class CreationsWindow(QDialog):
         self._query.setClearButtonEnabled(True)
         self._query.setAccessibleName("Search Creations")
         self._query.returnPressed.connect(self.start_search)
+        self._theme_context_menu(self._query)
         self._search_button = QPushButton("&Browse")  # says Search once there are words to search for (see _on_query_edited)
         self._search_button.clicked.connect(self.start_search)
         self._query.textChanged.connect(self._on_query_edited)
@@ -525,6 +532,15 @@ class CreationsWindow(QDialog):
         order.addWidget(self._verified_only)  # the creator filters sit with the other list controls, on the roomier row
         order.addWidget(self._official_only)
         order.addStretch(1)
+        self._theme = QComboBox()
+        self._theme.setAccessibleName("Window colours")
+        self._theme.setToolTip(texts.THEME_TIP)
+        for key in theme.MODES:
+            self._theme.addItem(theme.MODE_LABELS[key], key)
+        theme_label = QLabel("&Theme:")
+        theme_label.setBuddy(self._theme)
+        order.addWidget(theme_label)
+        order.addWidget(self._theme)
         by_author = QHBoxLayout()
         by_author.addWidget(self._author_label, 1)
         by_author.addWidget(self._author_clear)
@@ -538,12 +554,13 @@ class CreationsWindow(QDialog):
         self._tips = {w: w.toolTip() for w in (self._pc_only, self._free_only, self._verified_only, self._official_only,
                                                self._category)}
         self._sort.currentIndexChanged.connect(self._on_sort_changed)
+        self._theme.currentIndexChanged.connect(lambda _i: self.apply_theme(self._theme.currentData()))
         self._sync_sort_controls()
         self._show_author(None)
 
         self._list = QListWidget()
         self._list.setAccessibleName("Search results")
-        self._list.setItemDelegate(_RowDelegate(self._list))
+        self._list.setItemDelegate(_RowDelegate(self._list, lambda: theme.SCHEMES.get(self.theme_mode())))
         self._list.setUniformItemSizes(True)
         self._list.currentItemChanged.connect(self._on_row_changed)
         self._list.setMinimumWidth(em * 14)
@@ -554,8 +571,20 @@ class CreationsWindow(QDialog):
         self._message.setWordWrap(True)
         self._message.setTextFormat(Qt.TextFormat.PlainText)
         self._message.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._message_rest = True  # the message is a calm one (a hint, loading, nothing found), not a problem
+        self._mark = QLabel()  # the sayngwyn mark, faded, above calm messages (sayngwyn theme only)
+        self._mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._mark.hide()
+        empty = QWidget()
+        empty.setObjectName("emptyState")
+        empty_column = QVBoxLayout(empty)
+        empty_column.addStretch(1)
+        empty_column.addWidget(self._mark)
+        empty_column.addSpacing(em // 2)
+        empty_column.addWidget(self._message)
+        empty_column.addStretch(1)
         self._stack.setMinimumWidth(self._stack_min)
-        self._stack.addWidget(self._message)
+        self._stack.addWidget(empty)
         self._details_scroll = QScrollArea()  # at the smallest window the facts scroll instead of squeezing the rows around them
         self._details_scroll.setWidgetResizable(True)
         self._details_scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -581,6 +610,7 @@ class CreationsWindow(QDialog):
         splitter.setSizes([em * 28, em * 32])
 
         self._download_button = QPushButton("&Download")
+        self._download_button.setProperty("primary", True)  # the window's one main action: red in the sayngwyn theme
         self._download_button.clicked.connect(self.download_selected)
         self._progress = QProgressBar()
         self._progress.setRange(0, 100)
@@ -607,10 +637,20 @@ class CreationsWindow(QDialog):
         self._status.setTextFormat(Qt.TextFormat.PlainText)
         self._status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self._status.setAccessibleName("Status")
+        self._status_sign = QLabel(theme.WARNING_SIGN)  # shown beside the status line only when it reports a problem
+        self._status_sign.setProperty("tone", "error")
+        self._status_sign.setAccessibleName("Problem")
+        self._status_sign.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self._status_sign.hide()
+        status_row = QHBoxLayout()
+        status_row.addWidget(self._status_sign)
+        status_row.addWidget(self._status, 1)
         rule = QFrame()
+        rule.setObjectName("rule")
         rule.setFrameShape(QFrame.Shape.HLine)
         rule.setFrameShadow(QFrame.Shadow.Sunken)
         self._notice = QLabel(texts.NOTICE)
+        self._notice.setObjectName("notice")
         self._notice.setWordWrap(True)
         self._notice.setTextFormat(Qt.TextFormat.PlainText)
         self._notice.setAccessibleName("Notice")
@@ -623,7 +663,7 @@ class CreationsWindow(QDialog):
         layout.addWidget(splitter, 1)
         layout.addLayout(buttons)
         layout.addWidget(self._note)
-        layout.addWidget(self._status)
+        layout.addLayout(status_row)
         layout.addWidget(rule)
         layout.addWidget(self._notice)
 
@@ -636,7 +676,8 @@ class CreationsWindow(QDialog):
         self.setTabOrder(self._owned_only, self._sort)
         self.setTabOrder(self._sort, self._verified_only)
         self.setTabOrder(self._verified_only, self._official_only)
-        self.setTabOrder(self._official_only, self._author_clear)
+        self.setTabOrder(self._official_only, self._theme)
+        self.setTabOrder(self._theme, self._author_clear)
         self.setTabOrder(self._author_clear, self._list)
         self.setTabOrder(self._list, self._more_button)
         self.setTabOrder(self._more_button, self._req_button)
@@ -701,12 +742,15 @@ class CreationsWindow(QDialog):
         self._notes = QPlainTextEdit()
         self._notes.setReadOnly(True)
         self._notes.setAccessibleName("Release notes for the PC version")
+        for box in (self._description, self._notes):
+            self._theme_context_menu(box)
         self._tabs = QTabWidget()
         self._tabs.addTab(self._description, "Description")
         self._tabs.addTab(self._notes, "Release notes")
         self._tabs.setMinimumHeight(em * 8)
 
         page = QWidget()
+        page.setObjectName("detailPage")
         column = QVBoxLayout(page)
         column.setContentsMargins(em // 2, 0, 0, 0)
         column.addLayout(head)
@@ -796,15 +840,122 @@ class CreationsWindow(QDialog):
         if self._detail:
             self._d_avail.setText(texts.availability(self._detail, owned=owned))
 
-    def _set_status(self, text: str, log_it: bool = True):
-        """Show ``text`` on the status line (and log it, except for the frequent progress updates)."""
+    def _set_status(self, text: str, log_it: bool = True, problem: bool = False):
+        """Show ``text`` on the status line (and log it, except for the frequent progress updates). A ``problem`` is shown
+        in the alarm colour beside a warning sign, so it never reads as an ordinary update."""
         self._status.setText(text)
+        self._status.setProperty("tone", "error" if problem else "")
+        self._status.style().unpolish(self._status)
+        self._status.style().polish(self._status)
+        self._status_sign.setVisible(problem and bool(text))
         if log_it:
             core.log_line(logging.INFO, f"status: {text}")
 
-    def _show_message(self, text: str):
+    # ---- the theme
+
+    def _theme_context_menu(self, box: QLineEdit | QPlainTextEdit):
+        """``box``'s right-click menu is Qt's own (Undo, Copy, Paste…), shown by the window so that in a theme of ours its
+        icons take the theme's text colour."""
+        box.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        box.customContextMenuRequested.connect(lambda pos, b=box: self._show_context_menu(b, pos))
+
+    def _show_context_menu(self, box: QLineEdit | QPlainTextEdit, pos):
+        try:
+            menu = box.createStandardContextMenu()
+            if menu is None:
+                return
+            scheme = theme.SCHEMES.get(self.theme_mode())  # "Match MO2" leaves the icons as MO2's theme has them
+            if scheme is not None:
+                style = self.style()
+                size = style.pixelMetric(QStyle.PixelMetric.PM_SmallIconSize) if style is not None else 16
+                for action in menu.actions():
+                    if not action.icon().isNull():
+                        action.setIcon(theme.tinted(action.icon(), scheme.text, scheme.muted, size, self.devicePixelRatioF()))
+            menu.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            self._context_menu = menu  # Qt gives it no parent: without this, Python would delete it before it showed
+            origin = box.viewport() if isinstance(box, QPlainTextEdit) else box  # a text box's position is in its viewport
+            menu.popup((origin or box).mapToGlobal(pos))
+        except Exception as exc:  # a slot: a failure here must not leave anything half-done
+            core.log_line(logging.WARNING, f"could not show the right-click menu ({type(exc).__name__})")
+
+    def theme_mode(self) -> str:
+        return self._theme_mode or theme.DEFAULT_MODE
+
+    def apply_theme(self, mode: str | None, save: bool = True):
+        """Colour the window with ``mode`` ("sayngwyn" or "mo2"; anything else is the default) and, when the user picked it,
+        hand it to the plugin to save."""
+        mode = mode if mode in theme.MODES else theme.DEFAULT_MODE
+        if mode == self._theme_mode:
+            return
+        self._theme_mode = mode
+        # The old sheet goes first: removing a sheet puts back the palette the window had when it was set, which would
+        # undo the palette below.
+        self.setStyleSheet("")
+        if mode in theme.SCHEMES:
+            self.setPalette(theme.palette_for(mode, QApplication.palette(self)))
+        else:
+            self.setPalette(QPalette())  # nothing resolved: the window takes MO2's palette again
+        self.setStyleSheet(theme.stylesheet(mode))
+        # Qt polishes a window lazily, at its first grab or show, and that first polish would rebuild the palette from the
+        # sheet after the one set below; polished now, it has nothing left to do then.
+        self.ensurePolished()
+        # A widget already polished under the old sheet keeps that sheet's rules (and palette) until it is polished again,
+        # which Qt does not do for a window that hasn't been shown yet: a switch then left the list's selection in the old
+        # theme's colour. So the window and every widget inside are polished again from the new sheet, and the window then
+        # gets its palette back (polishing it rebuilds its palette from the sheet).
+        for widget in [self, *self.findChildren(QWidget)]:
+            style = widget.style()
+            if style is not None:
+                style.unpolish(widget)
+                style.polish(widget)
+        if mode in theme.SCHEMES:
+            self.setPalette(theme.palette_for(mode, QApplication.palette(self)))
+        viewport = self._list.viewport()
+        if viewport is not None:
+            viewport.update()  # the rows' painter takes its text colour from the theme too (see _RowDelegate)
+        self._dress_message()
+        self._theme.blockSignals(True)
+        self._theme.setCurrentIndex(max(self._theme.findData(mode), 0))
+        self._theme.blockSignals(False)
+        if save and self._on_theme_change is not None:
+            try:
+                self._on_theme_change(mode)
+            except Exception as exc:  # the colours still change; only remembering them failed
+                core.log_line(logging.WARNING, f"could not save the theme choice ({type(exc).__name__})")
+
+    def _show_message(self, text: str, rest: bool = True):
+        """Show ``text`` in the details pane. A calm message (``rest``) gets the brand in the sayngwyn theme; a problem never
+        does, so it can't read as decoration."""
         self._message.setText(text)
+        self._message_rest = rest
+        self._dress_message()
         self._stack.setCurrentIndex(0)
+
+    def _dress_message(self):
+        """The empty details pane in the sayngwyn theme: the mark, faded, above the message in Sayngwyn Serif with the red
+        offset shadow. Otherwise the plain message in the window's own font."""
+        brand = self._theme_mode == "sayngwyn" and self._message_rest
+        family = theme.brand_family() if brand else None
+        pixmap = theme.mark(self.fontMetrics().height() * 6, self.devicePixelRatioF()) if brand else None
+        if pixmap is not None:
+            self._mark.setPixmap(pixmap)
+            fade = QGraphicsOpacityEffect(self._mark)
+            fade.setOpacity(theme.MARK_OPACITY)
+            self._mark.setGraphicsEffect(fade)
+        self._mark.setVisible(pixmap is not None)
+        if family:
+            font = QFont(family)
+            font.setPixelSize(theme.BRAND_TEXT_PX)
+            self._message.setFont(font)
+            shadow = QGraphicsDropShadowEffect(self._message)
+            shadow.setBlurRadius(0)
+            step = theme.BRAND_TEXT_PX * theme.SHADOW_SHARE
+            shadow.setOffset(step, step)
+            shadow.setColor(QColor(theme.SHADOW))
+            self._message.setGraphicsEffect(shadow)
+        else:
+            self._message.setFont(QFont())  # nothing set: it inherits the window's font again
+            self._message.setGraphicsEffect(None)
 
     def _blocker(self) -> str | None:
         """Why downloading is off for the picked game (None when it is allowed)."""
@@ -1537,7 +1688,8 @@ class CreationsWindow(QDialog):
         self._progress.setValue(0)
         self._progress.setTextVisible(False)
         self._set_status(texts.describe_error(status, message, refused=message) if status != "INTERNAL" else
-                         "Something went wrong inside the plugin. Nothing was saved; see Mod Organizer 2's log for details.")
+                         "Something went wrong inside the plugin. Nothing was saved; see Mod Organizer 2's log for details.",
+                         problem=True)
         self._refresh_controls()
 
     # ---- results from the background jobs
@@ -1585,8 +1737,8 @@ class CreationsWindow(QDialog):
         text = (texts.describe_error(status, message, refused=message) if status != "INTERNAL"
                 else "Something went wrong inside the plugin; see Mod Organizer 2's log for details.")
         if kind == "detail":
-            self._show_message(f"Couldn't load this Creation. {text}")
-        self._set_status(text)
+            self._show_message(f"Couldn't load this Creation. {text}", rest=False)
+        self._set_status(text, problem=True)
 
     # ---- showing and closing
 
@@ -1594,6 +1746,11 @@ class CreationsWindow(QDialog):
         # The window opens on a list: the first time it is shown (and again if that first load never finished, or the game
         # was changed and nothing was searched since) it browses by itself. A window that already has its rows just shows them.
         super().showEvent(event)
+        handle = self.windowHandle()
+        if handle is not None and not self._screen_hooked:  # the mark is redrawn for the pixel ratio of the screen it is on
+            handle.screenChanged.connect(lambda _screen: self._dress_message())
+            self._screen_hooked = True
+        self._dress_message()
         if not event.spontaneous() and self._catalog is None and self._rows:  # reopened: the game's list may have grown
             self._reload_catalog()
         if (self.AUTO_BROWSE and not event.spontaneous() and self._spec is None and not self._searching
