@@ -19,6 +19,8 @@ downloads.
 
 <p align="center"><img alt="The window as it opens in Skyrim Special Edition: the most downloaded Creations, nothing selected yet" src="docs/screenshots/start-screen.png"></p>
 
+<p align="center"><sub><em>The window when you open it: the most downloaded Creations for your game, with the filters and sort order along the top.</em></sub></p>
+
 ## What you get
 
 - **The best stuff first.** Sort by most downloaded, trending this week, newest, most liked and more.
@@ -26,7 +28,13 @@ downloads.
 - **Know before you download.** Description, version, size, release notes and what it needs, plus a link to its Creations page.
 - **See what you already have.** Creations your game downloaded are marked *In your game*, and paid ones show their price in Creation Credits.
 
-<p align="center"><img alt="A Fallout 4 search for power armor, sorted by downloads, with a free Creation selected" src="docs/screenshots/search-sorted-by-downloads.png"></p>
+<p align="center"><img alt="A Fallout 4 search for power armor, sorted by most downloaded, nothing selected yet" src="docs/screenshots/search-sorted-by-downloads.png"></p>
+
+<p align="center"><sub><em>Results sorted by most downloaded: every row shows Free or its price, the author, downloads, likes and the last update.</em></sub></p>
+
+<p align="center"><img alt="A free Fallout 4 Creation selected: its description, version and size, with the Download button below the list" src="docs/screenshots/details-and-download.png"></p>
+
+<p align="center"><sub><em>Pick a Creation to see its description, version, size and release notes, with a link to its Creations page and the Download button for free ones.</em></sub></p>
 
 ## Install
 
@@ -48,6 +56,8 @@ so don't install the zip as a mod from the Downloads tab.
   `creations_browser` folder from `plugins`.
 
 <p align="center"><img alt="In my game only, in Fallout 4: the Creations the game already has" src="docs/screenshots/in-my-game.png"></p>
+
+<p align="center"><sub><em>With In my game only ticked, the list shows the Creations your game has already downloaded, each marked In your game.</em></sub></p>
 
 ## Good to know
 
