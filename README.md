@@ -157,6 +157,13 @@ Like the look of this window? Get [Sayngwyn Theme for Mod Organizer 2](https://w
 
 ---
 
+## Credits
+
+- **The Mod Organizer 2 team** for Mod Organizer 2 and the plugin system this is built on.
+- **Riverbank Computing and The Qt Company** for PyQt6 and Qt, which draw the window (they ship inside MO2).
+- **Natanael Gama and Christian Thalmann** for Cinzel and Cormorant Garamond, the open fonts Sayngwyn Serif is built from.
+- **Each Creation's author** for the mods you browse here; they keep all rights to them.
+
 Made with AI. Claude contributed heavily under my direction: I decided what it does and checked it, and the AI wrote most
 of the code, its tests and these docs. It's tested by 500-plus automated tests and live in a real Mod Organizer 2 with both
 games.
