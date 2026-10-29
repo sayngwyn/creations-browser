@@ -144,7 +144,7 @@ The tests use a fake network, so they never contact Bethesda. `scripts\build_rel
 ## Report a problem
 
 Open an issue at https://github.com/sayngwyn/creations-browser/issues, or find me on
-[Discord](https://discord.gg/QZHymBYMxP). Say which game, which Creation (its creations.bethesda.net link is ideal), what
+[Discord](https://discord.com/invite/sayngwyn). Say which game, which Creation (its creations.bethesda.net link is ideal), what
 you did and what the status line said. Don't include anything from MO2's log you wouldn't want to be public.
 
 ## More by sayngwyn
