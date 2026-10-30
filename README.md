@@ -149,7 +149,7 @@ you did and what the status line said. Don't include anything from MO2's log you
 
 ## More by sayngwyn
 
-[![All my mods on Nexus, every game](https://sayngwyn.com/img/mods/button-all-mods-v1.png)](https://www.nexusmods.com/profile/sayngwyn/mods)
+[![All my mods on Nexus, every game](https://sayngwyn.com/img/mods/button-all-mods-v2.png)](https://www.nexusmods.com/profile/sayngwyn/mods)
 
 Also on [my website](https://sayngwyn.com/projects).
 
