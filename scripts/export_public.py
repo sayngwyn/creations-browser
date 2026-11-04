@@ -21,7 +21,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 BRANCH = "public"
-PRIVATE = ["STATUS.md", "CLAUDE.md", "reports", "scripts/release_preview"]  # project records and the private draft preview
+PRIVATE = ["STATUS.md", "STATUS-archive.md", "CLAUDE.md", "reports", "scripts/release_preview"]  # project records and the private draft preview
 
 
 def git(*args: str, env: dict | None = None) -> str:
