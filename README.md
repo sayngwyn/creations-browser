@@ -143,9 +143,15 @@ The tests use a fake network, so they never contact Bethesda. `scripts\build_rel
 
 ## Report a problem
 
-Open an issue at https://github.com/sayngwyn/creations-browser/issues, or find me on
-[Discord](https://discord.com/invite/sayngwyn). Say which game, which Creation (its creations.bethesda.net link is ideal), what
-you did and what the status line said. Don't include anything from MO2's log you wouldn't want to be public.
+**Found a bug?** Open an issue at https://github.com/sayngwyn/creations-browser/issues, or post in **Bugs** on the Nexus page, with the game, the
+Creation (its creations.bethesda.net link is ideal), what you did, what the status line said, and MO2's log. I need the log for every report,
+because it shows what the plugin actually did. It's the file `logs\mo_interface.log` in your MO2 folder, and the same text is in MO2's Log pane.
+Send it before you start MO2 again, because each launch replaces it. If MO2 crashed, the same log is what I need.
+
+Reports without the log are closed after 14 days; post it later and I'll reopen the report.
+
+The log is long, so link a paste site or bring it to [Discord](https://discord.com/invite/sayngwyn). It can show your Windows username, so
+use a private report on Nexus if you'd rather.
 
 ## More by sayngwyn
 
